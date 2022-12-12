@@ -28,8 +28,8 @@ class SkillDecoder(ActionDecoder):
             criterion: str,
             num_layers: int,
             rnn_model: str,
-            perceptual_emb_slice: tuple,
-            time_slice: tuple,
+            perceptual_emb_slice: list,
+            time_slice: list,
             gripper_control: bool,
             sg_chk_path: str,
             skill_len: int,
@@ -53,7 +53,7 @@ class SkillDecoder(ActionDecoder):
 
         self.criterion = getattr(nn, criterion)()
         self.perceptual_emb_slice = perceptual_emb_slice
-        self.time_slice = time_slice
+        self.time_slice = [0, None, skill_len]
         self.hidden_state = {'skill_emb': None, 'skill_cls': None}
         self.sg_chk_path = Path(sg_chk_path)
         if not self.sg_chk_path.is_absolute():
@@ -134,7 +134,7 @@ class SkillDecoder(ActionDecoder):
             act_seq_len: the required action sequence length
         """
         act_seq_len = perceptual_emb.shape[1]
-        perceptual_emb = perceptual_emb[..., slice(*self.time_slice), slice(*self.perceptual_emb_slice)]
+        perceptual_emb = perceptual_emb[..., slice(0, None, 5), slice(*self.perceptual_emb_slice)]
         batch_size, skill_seq_len = perceptual_emb.shape[0], perceptual_emb.shape[1]
         latent_plan = latent_plan.unsqueeze(1).expand(-1, skill_seq_len,
                                                       -1) if latent_plan.nelement() > 0 else latent_plan
