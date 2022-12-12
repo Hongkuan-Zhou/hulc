@@ -92,24 +92,44 @@ class SkillGenerator(pl.LightningModule):
         kl_loss = D.kl_divergence(post_dist, prior_dist)
         return kl_loss
 
+    @staticmethod
+    def _check_direction(dire):
+        p = torch.clone(dire)
+        n = torch.clone(dire)
+        p[dire < 0.] = 0.
+        n[dire > 0.] = 0.
+        n = torch.abs(n)
+        return p, n
+
     def skill_classifier(self, actions, eps=1e-6):
-        energy = 0.
         gripper_energy = 0.
         _, T, _ = actions.shape
-        for i in range(T):
-            energy += abs(actions[:, i, :6])
+        diff = torch.sum(actions[:, :, :6], dim=1)
         for i in range(T - 1):
             gripper_energy += abs(actions[:, i + 1, 6] - actions[:, i, 6])
+        energy = torch.abs(diff)
 
-        translation = (energy[:, 0] + energy[:, 1] + energy[:, 2]) / 3
+        translation_right, translation_left = self._check_direction(diff[:, 0])
+        translation_forward, translation_backward = self._check_direction(diff[:, 1])
+        translation_up, translation_down = self._check_direction(diff[:, 2])
+
         rotation = (energy[:, 3] + energy[:, 4] + energy[:, 5]) / 3
         gripper = gripper_energy
-        translation /= self.scale[0]
+
+        translation_right /= self.scale[0]
+        translation_left /= self.scale[0]
+        translation_forward /= self.scale[0]
+        translation_backward /= self.scale[0]
+        translation_up /= self.scale[0]
+        translation_down /= self.scale[0]
+
         rotation /= self.scale[1]
         gripper /= self.scale[2]
-        t = torch.stack([translation, rotation, gripper], dim=-1)
+
+        t = torch.stack([translation_left, translation_right, translation_forward, translation_backward, translation_up, translation_down, rotation, gripper], dim=-1)
         B, _ = t.shape
         skill_types = torch.argmax(t, dim=-1)
+
         one_hot_key = torch.zeros_like(t)
         one_hot_key[torch.arange(B), skill_types] = 1.
         return {
@@ -124,9 +144,14 @@ class SkillGenerator(pl.LightningModule):
         B, T, _ = actions.shape
         seq_l = self.seq_l.repeat(B)
         ret = self.forward(tcp_actions, seq_l)
-        translation_prior_state = ContState(ret['p_mu'][:, 0], ret['p_scale'][:, 0])
-        rotation_prior_state = ContState(ret['p_mu'][:, 1], ret['p_scale'][:, 1])
-        grasp_prior_state = ContState(ret['p_mu'][:, 2], ret['p_scale'][:, 2])
+        translation_left_prior_state = ContState(ret['p_mu'][:, 0], ret['p_scale'][:, 0])
+        translation_right_prior_state = ContState(ret['p_mu'][:, 1], ret['p_scale'][:, 1])
+        translation_forward_prior_state = ContState(ret['p_mu'][:, 2], ret['p_scale'][:, 2])
+        translation_backward_prior_state = ContState(ret['p_mu'][:, 3], ret['p_scale'][:, 3])
+        translation_up_prior_state = ContState(ret['p_mu'][:, 4], ret['p_scale'][:, 4])
+        translation_down_prior_state = ContState(ret['p_mu'][:, 5], ret['p_scale'][:, 5])
+        rotation_prior_state = ContState(ret['p_mu'][:, 6], ret['p_scale'][:, 6])
+        grasp_prior_state = ContState(ret['p_mu'][:, 7], ret['p_scale'][:, 7])
 
         skill_state = ContState(ret['z_mu'], ret['z_scale'])
         rec_loss = ret['rec_loss']
@@ -134,9 +159,14 @@ class SkillGenerator(pl.LightningModule):
 
         sc_ret = self.skill_classifier(tcp_actions)
         ohk, _ = sc_ret['one_hot_key'], sc_ret['skill_types']
-        prior_train_loss = (self.pl_w[0] * ohk[:, 0] * self.compute_kl_loss(skill_state, translation_prior_state, mode=self.mode) +
-                            self.pl_w[1] * ohk[:, 1] * self.compute_kl_loss(skill_state, rotation_prior_state, mode=self.mode) +
-                            self.pl_w[2] * ohk[:, 2] * self.compute_kl_loss(skill_state, grasp_prior_state, mode=self.mode)).mean()
+        prior_train_loss = (self.pl_w[0] * ohk[:, 0] * self.compute_kl_loss(skill_state, translation_left_prior_state, mode=self.mode)
+                            + self.pl_w[1] * ohk[:, 1] * self.compute_kl_loss(skill_state, translation_right_prior_state, mode=self.mode)
+                            + self.pl_w[2] * ohk[:, 2] * self.compute_kl_loss(skill_state, translation_forward_prior_state, mode=self.mode)
+                            + self.pl_w[3] * ohk[:, 3] * self.compute_kl_loss(skill_state, translation_backward_prior_state, mode=self.mode)
+                            + self.pl_w[4] * ohk[:, 4] * self.compute_kl_loss(skill_state, translation_up_prior_state, mode=self.mode)
+                            + self.pl_w[5] * ohk[:, 5] * self.compute_kl_loss(skill_state, translation_down_prior_state, mode=self.mode)
+                            + self.pl_w[6] * ohk[:, 6] * self.compute_kl_loss(skill_state, rotation_prior_state, mode=self.mode)
+                            + self.pl_w[7] * ohk[:, 7] * self.compute_kl_loss(skill_state, grasp_prior_state, mode=self.mode)).mean()
 
         total_loss = rec_loss + self.kl_beta * reg_loss + self.kl_sigma * prior_train_loss
 
@@ -155,9 +185,14 @@ class SkillGenerator(pl.LightningModule):
         B, T, _ = actions.shape
         seq_l = self.seq_l.repeat(B)
         ret = self.forward(tcp_actions, seq_l)
-        translation_prior_state = ContState(ret['p_mu'][:, 0], ret['p_scale'][:, 0])
-        rotation_prior_state = ContState(ret['p_mu'][:, 1], ret['p_scale'][:, 1])
-        grasp_prior_state = ContState(ret['p_mu'][:, 2], ret['p_scale'][:, 2])
+        translation_left_prior_state = ContState(ret['p_mu'][:, 0], ret['p_scale'][:, 0])
+        translation_right_prior_state = ContState(ret['p_mu'][:, 1], ret['p_scale'][:, 1])
+        translation_forward_prior_state = ContState(ret['p_mu'][:, 2], ret['p_scale'][:, 2])
+        translation_backward_prior_state = ContState(ret['p_mu'][:, 3], ret['p_scale'][:, 3])
+        translation_up_prior_state = ContState(ret['p_mu'][:, 4], ret['p_scale'][:, 4])
+        translation_down_prior_state = ContState(ret['p_mu'][:, 5], ret['p_scale'][:, 5])
+        rotation_prior_state = ContState(ret['p_mu'][:, 6], ret['p_scale'][:, 6])
+        grasp_prior_state = ContState(ret['p_mu'][:, 7], ret['p_scale'][:, 7])
 
         skill_state = ContState(ret['z_mu'], ret['z_scale'])
         rec_loss = ret['rec_loss']
@@ -166,9 +201,14 @@ class SkillGenerator(pl.LightningModule):
 
         sc_ret = self.skill_classifier(tcp_actions)
         ohk, skill_types = sc_ret['one_hot_key'], sc_ret['skill_types']
-        prior_train_loss = (self.pl_w[0] * ohk[:, 0] * self.compute_kl_loss(skill_state, translation_prior_state, mode=2)
-                            + self.pl_w[1] * ohk[:, 1] * self.compute_kl_loss(skill_state, rotation_prior_state, mode=2)
-                            + self.pl_w[2] * ohk[:, 2] * self.compute_kl_loss(skill_state, grasp_prior_state, mode=2)).mean()
+        prior_train_loss = (self.pl_w[0] * ohk[:, 0] * self.compute_kl_loss(skill_state, translation_left_prior_state, mode=0)
+                            + self.pl_w[1] * ohk[:, 1] * self.compute_kl_loss(skill_state, translation_right_prior_state, mode=0)
+                            + self.pl_w[2] * ohk[:, 2] * self.compute_kl_loss(skill_state, translation_forward_prior_state, mode=0)
+                            + self.pl_w[3] * ohk[:, 3] * self.compute_kl_loss(skill_state, translation_backward_prior_state, mode=0)
+                            + self.pl_w[4] * ohk[:, 4] * self.compute_kl_loss(skill_state, translation_up_prior_state, mode=0)
+                            + self.pl_w[5] * ohk[:, 5] * self.compute_kl_loss(skill_state, translation_down_prior_state, mode=0)
+                            + self.pl_w[6] * ohk[:, 6] * self.compute_kl_loss(skill_state, rotation_prior_state, mode=0)
+                            + self.pl_w[7] * ohk[:, 7] * self.compute_kl_loss(skill_state, grasp_prior_state, mode=0)).mean()
 
         total_loss = rec_loss + self.kl_beta * reg_loss + self.kl_sigma * prior_train_loss
 

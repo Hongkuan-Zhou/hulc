@@ -7,5 +7,6 @@ loss.kl_beta=2e-6 \
 loss.kl_sigma=5e-5 \
 model.prior_seeking_mode=0 \
 model.skill_dim=18 \
+model.skill_len=5 \
 model.action_decoder.layer_size=256 \
 model.action_encoder.layer_size=256
