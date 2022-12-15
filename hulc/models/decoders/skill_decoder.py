@@ -47,8 +47,6 @@ class SkillDecoder(ActionDecoder):
         self.skill_selector = eval(rnn_model)
         self.skill_selector = self.skill_selector((perceptual_emb_slice[1] - perceptual_emb_slice[0]) + lang_in_features, hidden_size2, num_layers, policy_rnn_dropout_p)
         self.skill_classes = nn.Sequential(
-            nn.Linear(hidden_size2, hidden_size2),
-            nn.ReLU(inplace=True),
             nn.Linear(hidden_size2, skill_num),
             nn.Softmax(dim=-1)
         )
